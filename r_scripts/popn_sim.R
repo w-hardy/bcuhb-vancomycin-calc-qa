@@ -18,7 +18,9 @@ datetime <-
   as.character() %>%
   str_remove_all(" GMT")
 
-sim_popn <- tibble(id = 1:n_sims, sex, height, age, weight, creat, datetime)
+sim_popn <-
+  tibble(id = 1:n_sims, sex, height, age, weight, creat, datetime) %>%
+  mutate(across(where(is.numeric), ~round(., 3)))
 
 #### Write date to file ####
 sim_popn %>%
