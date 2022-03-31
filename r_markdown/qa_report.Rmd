@@ -1,0 +1,420 @@
+---
+title: "Vancomycin dosing calaculator QA"
+author: "Will A. S. Hardy"
+institution: "Bangor Univeristy"
+output: bookdown::html_document2
+toc: FALSE
+---
+
+```{r setup, include=FALSE}
+#### Packages ####
+library(tidyverse)
+library(lubridate)
+library(hms)
+library(readxl)
+library(knitr)
+library(kableExtra)
+
+#### Data ####
+r_results <- 
+  read_csv("../data/r_results.csv") %>% 
+  mutate(across(where(is.numeric), ~round(., 3)),
+         across(c(load_dose, dose1, dose2, dose3, dose4), 
+                ~as.numeric(str_remove_all(., "mg"))))
+
+excel_results <- 
+  read_excel("../data/excel_results.xlsx") %>% 
+  mutate(across(ends_with("time"), ~ymd_hms(.)),
+         across(where(is.numeric), ~round(., 3)),
+         across(c(load_dose, dose1, dose2, dose3, dose4), 
+                ~as.numeric(str_remove_all(., "mg"))))
+
+sim_popn <- 
+  read_csv("../data/sim_popn.csv") %>%
+  mutate(datetime = ymd_hms(datetime))
+
+knitr::opts_chunk$set(echo = FALSE, cache = FALSE, fig.pos = "H")
+```
+
+
+# Introduction
+
+- An Excel calculator has been developed to help ensure correct dosing of vancomycin.
+- The calculator is based on the BCUHB vancomycin chart and given the relevant inputs (gender, height, age, weight, creatinine concentration, and date & time of initial dose), an initial dosing regimen is calculated (dose and timings for loading dose, maintenance doses 1-4, and suggested pre-dose level).
+- The Excel needed to go through a quality assurance process before being rolled out, to ensure that the dosing regimen specified was consistent with the BCUHB dosing guidelines and chart.
+
+
+# Method
+
+- I used a four step process to check the outputs of the Excel calculator:
+  1. Simulate a population with data for each of the inputs listed above.
+  2. Using a macro, record the outputs of the Excel calculator for each simulated case.
+  3. Create a second calculator in a different programme (R) based on the BCUHB guidelines and chart and record the outputs from this for each simulated case.
+  4. Compare the outputs from the Excel and R calculators, if discrepancies exist, identify the source.
+- Code and data for the analyses are available at https://github.com/w-hardy/bcuhb-vancomycin-calc-qa 
+
+## Simulated population
+
+- Simulated a random population (n = `r nrow(papaja::printnum(sim_popn))`) to test a plausible range for each input
+  - `sex` (Female or Male)
+  - `height` (cm)
+  - `age` (years)
+  - `weight` (kg)
+  - `creat` (micromol/Litre)
+  - `datetime` (date and time of initial dose)
+- Each parameter is simulated individually from a uniform distribution. Therefore, some of resulting cases may not be realistic (e.g., an individual who is 229cm tall and under 21kg), however, many will be realistic and this does not affect the robustness of this process.
+- Table \@ref(tab:sim-popn-summary) shows the minimum and maximum values for each parameter in simulated population and Figure \@ref(fig:sim-popn-summary) shows their distributions.
+
+```{r, sim-popn-summary, fig.cap="Distribution of simulated variables"}
+list(Minimum = sim_popn %>%
+       select(-c(id,sex)) %>% 
+       summarise(across(everything(), min)),
+     Maximum = sim_popn %>%
+       select(-c(id, sex)) %>% 
+       summarise(across(everything(), max))) %>% 
+  bind_rows(.id = "statistic") %>% 
+  kable(caption = "Minimum and maxiumum values in simulated population",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+
+p1 <- 
+  sim_popn %>% 
+  ggplot(aes(x = sex)) +
+  geom_bar()
+
+p2 <- 
+  sim_popn %>% 
+  ggplot(aes(x = height)) +
+  geom_histogram(binwidth = 5)
+
+p3 <- 
+  sim_popn %>% 
+  ggplot(aes(x = age)) +
+  geom_histogram(binwidth = 5)
+
+p4 <- 
+  sim_popn %>% 
+  ggplot(aes(x = weight)) +
+  geom_histogram(binwidth = 5)
+
+p5 <- 
+  sim_popn %>% 
+  ggplot(aes(x = creat)) +
+  geom_histogram(binwidth = 5)
+
+p6 <- 
+  sim_popn %>% 
+  ggplot(aes(x = datetime)) +
+  geom_histogram(bins = 100)
+
+cowplot::plot_grid(p1, p2, p3, p4, p5, p6)
+```
+
+
+## Outputs
+
+- Both the Excel and R calculators calculate the following:
+  - `ibw` - ideal body weight
+  - `ddw` - dose determining weight
+  - `crcl` - creatinine clearance
+  - `load_dose` - size of loading dose
+  - `dose1` - size of maintenance dose 1
+  - `dose2` - size of maintenance dose 2
+  - `dose3` - size of maintenance dose 3
+  - `dose4` - size of maintenance dose 4
+  - `dose1_time` - date and time of maintenance dose 1
+  - `dose2_time` - date and time of maintenance dose 2
+  - `dose3_time` - date and time of maintenance dose 3
+  - `dose4_time` - date and time of maintenance dose 4
+  - `pre_level_before` - the maintenance dose that the pre-dose level should be taken at
+
+
+# Results
+
+## Do the two sets of results come from the same population?
+
+- Both calculators have used the same inputs.
+
+```{r, popn-check}
+list(r_sim = 100*colSums(r_results[,1:7] == sim_popn)/nrow(sim_popn),
+     excel_sim = 100*colSums(excel_results[,1:7] == sim_popn)/nrow(sim_popn),
+     r_excel = 100*colSums(r_results[,1:7] == excel_results[,1:7])/nrow(sim_popn)) %>% 
+  bind_rows(.id = "data") %>% 
+  mutate(data = str_replace_all(data, "_", " with ")) %>% 
+  kable(caption = "Percentage match for input data", booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+## Do the R and Excel outputs match?
+
+- The calculators do not give the same results. Table \@ref(tab:results-check) shows that the differences range in both size and frequency across the output variables.
+
+```{r, results-check}
+outputs <- 
+  c("ibw", "ddw", "crcl",
+    "load_dose", "dose1", "dose2", "dose3", "dose4", 
+    "dose1_time", "dose2_time", "dose3_time", "dose4_time",
+    "pre_level_before")
+
+list(pct = 
+       (r_results %>% select(all_of(outputs)) == excel_results %>% 
+          select(all_of(outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
+                          nrow(sim_popn))),
+     count = 
+       (r_results %>% select(all_of(outputs)) == excel_results %>% 
+          select(all_of(outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
+     max_abs_diff =
+       (r_results %>% 
+          select(all_of(outputs)) - excel_results %>% 
+          select(all_of(outputs))) %>% 
+       summarise(across(everything(), ~max(abs(.)))) %>% 
+       mutate(across(ends_with("time"), ~as.numeric(.)/60^2))
+) %>% 
+  bind_rows(.id = "measure") %>% 
+  pivot_longer(cols = all_of(outputs)) %>% 
+  pivot_wider(id_cols = "name", values_from = value, names_from = measure) %>% 
+  mutate(across(c(pct, max_abs_diff), as.numeric), 
+         count = as.integer(count)) %>% 
+  rename(Variable = name, Percentage = pct, Count = count,
+         `Max abs diff` = max_abs_diff) %>% 
+  kable(caption = "Comparison of R and Excel results",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE) %>% 
+  kableExtra::add_footnote(label = "*Note.* Max abs diff = the maximum absoulute difference between results, where 'absolute difference' is the magitude of the diffference irrespective of the direction.", notation = "none")
+
+```
+
+- crcl, and load_dose are the same for both calculators for all cases.
+- Differences in ibw and ddw are small and likely to be rounding differences due to the different software packages using a different number of decimal places in calculations.
+- Results for doses 1-4 and their timing are different in less 2% of cases and the maximum difference is equivalent to a change of one step on the dosing ladder (i.e., 250mg and up to 24 hours in dose interval). These differences appear to be due to differences in "cut-points" for Table 2 - Maintenance dose from the Vancomycin Chart. The boundaries on the chart leave room for user choice (Table \@ref(tab:dosing-ladder-interpretations). For example, dosing ladder step 2 on the chart is based on creatinine clearance (CrCl) "90 to 110 mL/min" and step 3 is "75 to 89mL/min." The user is then given the choice of assigning a patient with a CrCl of 89.5 to either step 2, by rounding to the nearest number, or step 3, by rounding down to the boundary
+- The differences in `pre_level_before` are substantive. The BCUHB vancomycin chart states that the pre-dose level is needed before the third or fourth dose for steps 1-5 on the dosing ladder and before the second or third dose for steps 6-8 on the dosing ladder. For all steps on the dosing ladder, the chart states that this should ideally be done during working hours (0600-1759 based on communication with Calum).
+  - Dosing ladder steps 1-5
+    - In the R calculator, I assumed that the pre-dose level should be taken at the third dose and that if this fell outside of working hours, it should be changed to the fourth dose (i.e., 12 hours later).
+    - In the Excel calculator, the pre-dose level is the third dose when that is in working hours, otherwise it is the fourth dose.
+  - Dosing ladder steps 6-8
+    - In the R calculator, I assumed that for steps 6-8 the pre-dose level should be taken at the second dose and that this should not change based on working hours, given that a change of 24 or 48 hours would still the same time of day, thus remaining outside of working hours.
+    - In the Excel calculator, for steps 6-8 the pre-dose level is the third dose in all cases.
+
+
+```{r, dosing-ladder-interpretations}
+dosing_ladder_step <- 1:3
+chart <- c(">110", "90-110", "75-89")
+option1 <- c(">110", "110 >= x > 90", "90 >= x > 75")
+option2 <- c(">110.5", "110.5 >= x > 89.5", "89.5 >= x > 74.9")
+
+tibble(dosing_ladder_step, chart, option1, option2) %>% 
+  kable(caption = "Dosing ladder interpretations",
+        col.names = c("Dosing ladder", "CrCl", "Option 1", "Option 2"),
+        align = "r", booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+# Modified R calculator
+
+- In this section, I have made incremental changes to the R calculator to check the sources of discrepancies.
+
+## Modification 1 - CrCl boundary option 2
+
+* As stated above, the dosing ladder boundaries based on creatinine clearance are unclear. \@ref(tab:r-calc-mod1) shows that the different interpretation of the boundaries (Option 2 in Table \@ref(tab:dosing-ladder-interpretations)) resolves the discrepancies between the calculators for dosing. Please note, this also has a very small impact on the discrepancies between the pre-dose levels.
+
+```{r, r-calc-mod1, message=FALSE}
+r_results_mod1 <-
+   read_csv("../data/sim_popn.csv") %>%
+   mutate(load_dose = case_when(weight < 60 ~ "1000mg",
+                                weight >=60 & weight <=90 ~ "1500mg",
+                                weight >90 ~ "2000mg"),
+          wght_gen_cnst = case_when(sex == "Female" ~ 45.5,
+                                    sex == "Male" ~ 50.0),
+          ibw = wght_gen_cnst + .91*(height-152.4),
+          ddw = ibw + (0.4*(weight - ibw)),
+          calc_weight = if_else(weight > 1.2*ibw, true = ddw, false = weight),
+          ren_gen_cnst = case_when(sex == "Female" ~ 1.04,
+                                   sex == "Male" ~ 1.23),
+          crcl = ((140-age)*ren_gen_cnst*calc_weight)/creat,
+          #### BOUNDARIES CHANGED ####
+          dose1 = case_when(crcl > 110.5 ~ "1500mg",
+                            crcl >= 89.5 & crcl <= 110.5 ~ "1250mg",
+                            crcl >= 74.5 & crcl < 89.5 ~ "1000mg",
+                            crcl >= 54.5 & crcl < 74.5 ~ "750mg",
+                            crcl >= 39.5 & crcl < 54.5 ~ "500mg",
+                            crcl >= 29.5 & crcl < 39.5 ~ "750mg",
+                            crcl >= 19.5 & crcl < 29.5 ~ "500mg",
+                            crcl < 19.5 ~ "500mg"),
+          ############################
+          dose2 = dose1,
+          dose3 = dose2,
+          dose4 = dose3,
+          #### BOUNDARIES CHANGED ####
+          dose_interval = case_when(crcl > 110.5 ~ hours(12),
+                                    crcl >= 89.5 & crcl <= 110.5 ~ hours(12),
+                                    crcl >= 74.5 & crcl < 89.5 ~ hours(12),
+                                    crcl >= 54.5 & crcl < 74.5 ~ hours(12),
+                                    crcl >= 39.5 & crcl < 54.5 ~ hours(12),
+                                    crcl >= 29.5 & crcl < 39.5 ~ hours(24),
+                                    crcl >= 19.5 & crcl < 29.5 ~ hours(24),
+                                    crcl < 19.5 ~ hours(48)),
+          ############################
+          dose1_time = datetime + dose_interval,
+          dose2_time = dose1_time + dose_interval,
+          dose3_time = dose2_time + dose_interval,
+          dose4_time = dose3_time + dose_interval,
+          #### BOUNDARIES CHANGED ####
+          pre_level = case_when(crcl >= 39.5 ~ 3,
+                                crcl < 39.5 ~ 2),
+          ############################
+          pre_level_time =
+            case_when(pre_level == 3 ~ as_hms(dose3_time),
+                      pre_level == 2 ~ as_hms(dose2_time)),
+          pre_level_work_time =
+            if_else(pre_level_time > hms(59, 59, 5) &
+                      pre_level_time < hms(00,00,18), TRUE, FALSE),
+          pre_level_before =
+            ifelse(dose_interval == period(12, "hours") & pre_level_work_time == FALSE,
+                   pre_level + 1, pre_level)) %>% 
+  mutate(across(where(is.numeric), ~round(., 3)),
+         across(c(load_dose, dose1, dose2, dose3, dose4), 
+                ~as.numeric(str_remove_all(., "mg"))))
+
+mod1_outputs <- 
+  c("dose1", "dose2", "dose3", "dose4", 
+    "dose1_time", "dose2_time", "dose3_time", "dose4_time",
+    "pre_level_before")
+  
+list(pct = 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results %>% 
+          select(all_of(mod1_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
+                          nrow(sim_popn))),
+     count = 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results %>% 
+          select(all_of(mod1_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
+     max_abs_diff =
+       (r_results_mod1 %>% 
+          select(all_of(mod1_outputs)) - excel_results %>% 
+          select(all_of(mod1_outputs))) %>% 
+       summarise(across(everything(), ~max(abs(.)))) %>% 
+       mutate(across(ends_with("time"), ~as.numeric(.)/60^2))) %>% 
+  bind_rows(.id = "measure") %>% 
+  pivot_longer(cols = all_of(mod1_outputs)) %>% 
+  pivot_wider(id_cols = "name", values_from = value, names_from = measure) %>% 
+  mutate(across(c(pct, max_abs_diff), as.numeric), 
+         count = as.integer(count)) %>% 
+  rename(Variable = name, Percentage = pct, Count = count,
+         `Max abs diff` = max_abs_diff) %>% 
+  kable(caption = "Comparison of R and Excel results - Modification 1",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+## Modification 2 - Default pre-dose level
+
+* Retaining modification 1 and making the default to take the pre-dose level before the third dose resolves the remaining discrepancies (Table \@ref(tab:r-calc-mod2)).
+
+
+```{r, r-calc-mod2, message=FALSE}
+r_results_mod2 <-
+   read_csv("../data/sim_popn.csv") %>%
+   mutate(load_dose = case_when(weight < 60 ~ "1000mg",
+                                weight >=60 & weight <=90 ~ "1500mg",
+                                weight >90 ~ "2000mg"),
+          wght_gen_cnst = case_when(sex == "Female" ~ 45.5,
+                                    sex == "Male" ~ 50.0),
+          ibw = wght_gen_cnst + .91*(height-152.4),
+          ddw = ibw + (0.4*(weight - ibw)),
+          calc_weight = if_else(weight > 1.2*ibw, true = ddw, false = weight),
+          ren_gen_cnst = case_when(sex == "Female" ~ 1.04,
+                                   sex == "Male" ~ 1.23),
+          crcl = ((140-age)*ren_gen_cnst*calc_weight)/creat,
+          dose1 = case_when(crcl > 110.5 ~ "1500mg",
+                            crcl >= 89.5 & crcl <= 110.5 ~ "1250mg",
+                            crcl >= 74.5 & crcl < 89.5 ~ "1000mg",
+                            crcl >= 54.5 & crcl < 74.5 ~ "750mg",
+                            crcl >= 39.5 & crcl < 54.5 ~ "500mg",
+                            crcl >= 29.5 & crcl < 39.5 ~ "750mg",
+                            crcl >= 19.5 & crcl < 29.5 ~ "500mg",
+                            crcl < 19.5 ~ "500mg"),
+          dose2 = dose1,
+          dose3 = dose2,
+          dose4 = dose3,
+          dose_interval = case_when(crcl > 110.5 ~ hours(12),
+                                    crcl >= 89.5 & crcl <= 110.5 ~ hours(12),
+                                    crcl >= 74.5 & crcl < 89.5 ~ hours(12),
+                                    crcl >= 54.5 & crcl < 74.5 ~ hours(12),
+                                    crcl >= 39.5 & crcl < 54.5 ~ hours(12),
+                                    crcl >= 29.5 & crcl < 39.5 ~ hours(24),
+                                    crcl >= 19.5 & crcl < 29.5 ~ hours(24),
+                                    crcl < 19.5 ~ hours(48)),
+          dose1_time = datetime + dose_interval,
+          dose2_time = dose1_time + dose_interval,
+          dose3_time = dose2_time + dose_interval,
+          dose4_time = dose3_time + dose_interval,
+          #### Default changed ####
+          # The default pre-dose level is now 3 for all patients
+          pre_level = 3,
+          #########################
+          #### Option removed ####
+          pre_level_time =
+            case_when(pre_level == 3 ~ as_hms(dose3_time)),
+          ########################
+          pre_level_work_time =
+            if_else(pre_level_time > hms(59, 59, 5) &
+                      pre_level_time < hms(00,00,18), TRUE, FALSE),
+          #### Rule changed ####
+          pre_level_before =
+            ifelse(dose_interval == period(12, units = "hours") & pre_level_work_time == FALSE,
+                   pre_level + 1, pre_level)) %>% 
+          ######################
+  mutate(across(where(is.numeric), ~round(., 3)),
+         across(c(load_dose, dose1, dose2, dose3, dose4), 
+                ~as.numeric(str_remove_all(., "mg"))))
+
+mod2_outputs <- 
+  c("pre_level_before")
+  
+list(pct = 
+       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results %>% 
+          select(all_of(mod2_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
+                          nrow(sim_popn))),
+     count = 
+       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results %>% 
+          select(all_of(mod2_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
+     max_abs_diff =
+       (r_results_mod2 %>% 
+          select(all_of(mod2_outputs)) - excel_results %>% 
+          select(all_of(mod2_outputs))) %>% 
+       summarise(across(everything(), ~max(abs(.)))) %>% 
+       mutate(across(ends_with("time"), ~as.numeric(.)/60^2))) %>% 
+  bind_rows(.id = "measure") %>% 
+  pivot_longer(cols = all_of(mod2_outputs)) %>% 
+  pivot_wider(id_cols = "name", values_from = value, names_from = measure) %>% 
+  mutate(across(c(pct, max_abs_diff), as.numeric), 
+         count = as.integer(count)) %>% 
+  rename(Variable = name, Percentage = pct, Count = count,
+         `Max abs diff` = max_abs_diff) %>% 
+  kable(caption = "Comparison of R and Excel results - Modification 2",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+# Conclusions
+
+* There are discrepancies in the results provided by the R and Excel calculators.
+* The substantive discrepancies are in the maintenance dose, the timing of the maintenance doses, and the suggested pre-dose level timing.
+* These discrepancies are primarily the result of different interpretations of the dosing guidelines, which are possible due to vagueness in the guidelines. There are some minor discrepancies that result from rounding differences in the two software packages.
+* Choosing which of the possible interpretations of the guidelines is beyond my knowledge and expertise, therefore I am unable to recommend one over the other, I am simply highlighting these choices and providing evidence for the scale of impact that these choices have.
+
