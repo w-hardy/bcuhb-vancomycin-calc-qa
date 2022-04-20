@@ -22,8 +22,15 @@ r_results <-
          across(c(load_dose, dose1, dose2, dose3, dose4), 
                 ~as.numeric(str_remove_all(., "mg"))))
 
-excel_results <- 
-  read_excel("../data/excel_results.xlsx") %>% 
+excel_results_v1 <- # vancomycin_dosing_calculator_9.1
+  read_excel("../data/excel_results_v1.xlsx") %>% 
+  mutate(across(ends_with("time"), ~ymd_hms(.)),
+         across(where(is.numeric), ~round(., 3)),
+         across(c(load_dose, dose1, dose2, dose3, dose4), 
+                ~as.numeric(str_remove_all(., "mg"))))
+
+excel_results_v2 <- # Vancomycin Dosing Calculator Calculator 4.4.xlsx
+  read_excel("../data/excel_results_v2.xlsx") %>% 
   mutate(across(ends_with("time"), ~ymd_hms(.)),
          across(where(is.numeric), ~round(., 3)),
          across(c(load_dose, dose1, dose2, dose3, dose4), 
@@ -40,6 +47,7 @@ knitr::opts_chunk$set(echo = FALSE, cache = FALSE, fig.pos = "H")
 # Introduction
 
 - An Excel calculator has been developed to help ensure correct dosing of vancomycin.
+  - This section referes to the `vancomycin_dosing_calculator_9.1.xlsx` version of the calculator
 - The calculator is based on the BCUHB vancomycin chart and given the relevant inputs (gender, height, age, weight, creatinine concentration, and date & time of initial dose), an initial dosing regimen is calculated (dose and timings for loading dose, maintenance doses 1-4, and suggested pre-dose level).
 - The Excel needed to go through a quality assurance process before being rolled out, to ensure that the dosing regimen specified was consistent with the BCUHB dosing guidelines and chart.
 
@@ -137,8 +145,8 @@ cowplot::plot_grid(p1, p2, p3, p4, p5, p6)
 
 ```{r, popn-check}
 list(r_sim = 100*colSums(r_results[,1:7] == sim_popn)/nrow(sim_popn),
-     excel_sim = 100*colSums(excel_results[,1:7] == sim_popn)/nrow(sim_popn),
-     r_excel = 100*colSums(r_results[,1:7] == excel_results[,1:7])/nrow(sim_popn)) %>% 
+     excel_sim = 100*colSums(excel_results_v1[,1:7] == sim_popn)/nrow(sim_popn),
+     r_excel = 100*colSums(r_results[,1:7] == excel_results_v1[,1:7])/nrow(sim_popn)) %>% 
   bind_rows(.id = "data") %>% 
   mutate(data = str_replace_all(data, "_", " with ")) %>% 
   kable(caption = "Percentage match for input data", booktabs = TRUE) %>% 
@@ -158,19 +166,19 @@ outputs <-
     "pre_level_before")
 
 list(pct = 
-       (r_results %>% select(all_of(outputs)) == excel_results %>% 
+       (r_results %>% select(all_of(outputs)) == excel_results_v1 %>% 
           select(all_of(outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
                           nrow(sim_popn))),
      count = 
-       (r_results %>% select(all_of(outputs)) == excel_results %>% 
+       (r_results %>% select(all_of(outputs)) == excel_results_v1 %>% 
           select(all_of(outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
      max_abs_diff =
        (r_results %>% 
-          select(all_of(outputs)) - excel_results %>% 
+          select(all_of(outputs)) - excel_results_v1 %>% 
           select(all_of(outputs))) %>% 
        summarise(across(everything(), ~max(abs(.)))) %>% 
        mutate(across(ends_with("time"), ~as.numeric(.)/60^2))
@@ -221,9 +229,9 @@ tibble(dosing_ladder_step, chart, option1, option2) %>%
 
 ## Modification 1 - CrCl boundary option 2
 
-* As stated above, the dosing ladder boundaries based on creatinine clearance are unclear. \@ref(tab:r-calc-mod1) shows that the different interpretation of the boundaries (Option 2 in Table \@ref(tab:dosing-ladder-interpretations)) resolves the discrepancies between the calculators for dosing. Please note, this also has a very small impact on the discrepancies between the pre-dose levels.
+* As stated above, the dosing ladder boundaries based on creatinine clearance are unclear. \@ref(tab:excel-v1-r-calc-mod1) shows that the different interpretation of the boundaries (Option 2 in Table \@ref(tab:dosing-ladder-interpretations)) resolves the discrepancies between the calculators for dosing. Please note, this also has a very small impact on the discrepancies between the pre-dose levels.
 
-```{r, r-calc-mod1, message=FALSE}
+```{r, excel-v1-r-calc-v1-mod1, message=FALSE}
 r_results_mod1 <-
    read_csv("../data/sim_popn.csv") %>%
    mutate(load_dose = case_when(weight < 60 ~ "1000mg",
@@ -287,19 +295,19 @@ mod1_outputs <-
     "pre_level_before")
   
 list(pct = 
-       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results %>% 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results_v1 %>% 
           select(all_of(mod1_outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
                           nrow(sim_popn))),
      count = 
-       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results %>% 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results_v1 %>% 
           select(all_of(mod1_outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
      max_abs_diff =
        (r_results_mod1 %>% 
-          select(all_of(mod1_outputs)) - excel_results %>% 
+          select(all_of(mod1_outputs)) - excel_results_v1 %>% 
           select(all_of(mod1_outputs))) %>% 
        summarise(across(everything(), ~max(abs(.)))) %>% 
        mutate(across(ends_with("time"), ~as.numeric(.)/60^2))) %>% 
@@ -318,10 +326,10 @@ list(pct =
 
 ## Modification 2 - Default pre-dose level
 
-* Retaining modification 1 and making the default to take the pre-dose level before the third dose resolves the remaining discrepancies (Table \@ref(tab:r-calc-mod2)).
+* Retaining modification 1 and making the default to take the pre-dose level before the third dose resolves the remaining discrepancies (Table \@ref(tab:excel-v1-r-calc-mod2)).
 
 
-```{r, r-calc-mod2, message=FALSE}
+```{r, excel-v1-r-calc-mod2, message=FALSE}
 r_results_mod2 <-
    read_csv("../data/sim_popn.csv") %>%
    mutate(load_dose = case_when(weight < 60 ~ "1000mg",
@@ -382,19 +390,19 @@ mod2_outputs <-
   c("pre_level_before")
   
 list(pct = 
-       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results %>% 
+       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results_v1 %>% 
           select(all_of(mod2_outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
                           nrow(sim_popn))),
      count = 
-       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results %>% 
+       (r_results_mod2 %>% select(all_of(mod2_outputs)) == excel_results_v1 %>% 
           select(all_of(mod2_outputs))) %>%
        as_tibble() %>% 
        summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
      max_abs_diff =
        (r_results_mod2 %>% 
-          select(all_of(mod2_outputs)) - excel_results %>% 
+          select(all_of(mod2_outputs)) - excel_results_v1 %>% 
           select(all_of(mod2_outputs))) %>% 
        summarise(across(everything(), ~max(abs(.)))) %>% 
        mutate(across(ends_with("time"), ~as.numeric(.)/60^2))) %>% 
@@ -411,10 +419,91 @@ list(pct =
 ```
 
 
-# Conclusions
+## Summary
 
 * There are discrepancies in the results provided by the R and Excel calculators.
 * The substantive discrepancies are in the maintenance dose, the timing of the maintenance doses, and the suggested pre-dose level timing.
 * These discrepancies are primarily the result of different interpretations of the dosing guidelines, which are possible due to vagueness in the guidelines. There are some minor discrepancies that result from rounding differences in the two software packages.
 * Choosing which of the possible interpretations of the guidelines is beyond my knowledge and expertise, therefore I am unable to recommend one over the other, I am simply highlighting these choices and providing evidence for the scale of impact that these choices have.
 
+
+---
+
+# Calculator v2
+
+- This section refers to the `Vancomycin Dosing Calculator Calculator 4.4.xlsx` version of the calculator 
+
+```{r, v2-check}
+list(pct = 
+       (r_results %>% select(all_of(outputs)) == excel_results_v2 %>% 
+          select(all_of(outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
+                          nrow(sim_popn))),
+     count = 
+       (r_results %>% select(all_of(outputs)) == excel_results_v2 %>% 
+          select(all_of(outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
+     max_abs_diff =
+       (r_results %>% 
+          select(all_of(outputs)) - excel_results_v2 %>% 
+          select(all_of(outputs))) %>% 
+       summarise(across(everything(), ~max(abs(.)))) %>% 
+       mutate(across(ends_with("time"), ~as.numeric(.)/60^2))
+) %>% 
+  bind_rows(.id = "measure") %>% 
+  pivot_longer(cols = all_of(outputs)) %>% 
+  pivot_wider(id_cols = "name", values_from = value, names_from = measure) %>% 
+  mutate(across(c(pct, max_abs_diff), as.numeric), 
+         count = as.integer(count)) %>% 
+  rename(Variable = name, Percentage = pct, Count = count,
+         `Max abs diff` = max_abs_diff) %>% 
+  kable(caption = "Comparison of R and Excel results",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE) %>% 
+  kableExtra::add_footnote(label = "*Note.* Max abs diff = the maximum absoulute difference between results, where 'absolute difference' is the magitude of the diffference irrespective of the direction.", notation = "none")
+```
+
+
+- The original version of the Excel calculator was modified, such that the default for the pre-dose level was the second dose, rather than third dose, for those on step 6-8 of the dosing ladder and no modifications were made for working hours (given the dose schedule would be based on 24 or 48 hour increments). In addition, those on steps 1-5 of the ladder would have a pre-dose level taken at the third dose, unless that fell outside of working hours, in which case it was moved back to the fourth dose.
+- The modification to the Excel calculator reduced the discrepancies in pre-dose level timing to 0.472%. As [shown below](#excel-v2-mod1), this discrepancy is due to the differences in CrCl boundaries used in the original R calculator.
+- For those where there is a discrepancy, the Excel calculator suggests taking the pre-dose level later than the R calculator. In 244 (51.69%) of cases, this is at the fourth dose instead of the second, in the remainder, the Excel calculator suggests taking the pre-dose level at the third, instead of second, dose.
+
+
+## Modification 1 - CrCl boundaries{#excel-v2-mod1}
+
+```{r, excel-v2-r-calc-v1-mod1, message=FALSE}
+list(pct = 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results_v2 %>% 
+          select(all_of(mod1_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100-(100 * sum(., na.rm = TRUE))/
+                          nrow(sim_popn))),
+     count = 
+       (r_results_mod1 %>% select(all_of(mod1_outputs)) == excel_results_v2 %>% 
+          select(all_of(mod1_outputs))) %>%
+       as_tibble() %>% 
+       summarise(across(everything(), ~100000 - sum(., na.rm = TRUE))),
+     max_abs_diff =
+       (r_results_mod1 %>% 
+          select(all_of(mod1_outputs)) - excel_results_v2 %>% 
+          select(all_of(mod1_outputs))) %>% 
+       summarise(across(everything(), ~max(abs(.)))) %>% 
+       mutate(across(ends_with("time"), ~as.numeric(.)/60^2))) %>% 
+  bind_rows(.id = "measure") %>% 
+  pivot_longer(cols = all_of(mod1_outputs)) %>% 
+  pivot_wider(id_cols = "name", values_from = value, names_from = measure) %>% 
+  mutate(across(c(pct, max_abs_diff), as.numeric), 
+         count = as.integer(count)) %>% 
+  rename(Variable = name, Percentage = pct, Count = count,
+         `Max abs diff` = max_abs_diff) %>% 
+  kable(caption = "Comparison of R and Excel results - Modification 1",
+        booktabs = TRUE) %>% 
+  kable_styling(full_width = FALSE)
+```
+
+
+## Summary
+
+Version 2 of the calculator (`Vancomycin Dosing Calculator Calculator 4.4.xlsx`) has fewer discrepancies with the R calculator than Version 1 did (`vancomycin_dosing_calculator_9.1.xlsx`). This is the result of changing the default pre-dose level to the earliest opportunity. Discrepancies resulting from the different interpretations of the boundaries for dosing ladder steps remain.
